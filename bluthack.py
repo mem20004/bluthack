@@ -1,4 +1,4 @@
-# python
+python
 import os
 import subprocess
 import time
@@ -6,70 +6,89 @@ from colorama import init, Fore, Style
 
 init(autoreset=True)
 
+# ===== ГРАДИЕНТ =====
+def gradient_text(text):
+    colors = [Fore.CYAN, Fore.BLUE]
+    result = ""
+    for i, char in enumerate(text):
+        result += colors[i % len(colors)] + char
+    return result
+
 # ===== БАННЕР =====
 def draw_banner():
-    banner = f"""
-{Fore.RED}██████╗ ██╗     ██╗   ██╗████████╗██╗  ██╗ █████╗  ██████╗██╗  ██╗
-{Fore.RED}██╔══██╗██║     ██║   ██║╚══██╔══╝██║  ██║██╔══██╗██╔════╝██║ ██╔╝
-{Fore.CYAN}██████╔╝██║     ██║   ██║   ██║   ███████║███████║██║     █████╔╝ 
-{Fore.CYAN}██╔══██╗██║     ██║   ██║   ██║   ██╔══██║██╔══██║██║     ██╔═██╗ 
-{Fore.GREEN}██████╔╝███████╗╚██████╔╝   ██║   ██║  ██║██║  ██║╚██████╗██║  ██╗
-{Fore.GREEN}╚═════╝ ╚══════╝ ╚═════╝    ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝
-
-{Fore.MAGENTA}           >>>   BlutHack Bluetooth Tool   <<<
-{Style.RESET_ALL}
+    os.system("clear")
+    banner = """
+██████╗ ██╗     ██╗   ██╗████████╗██╗  ██╗ █████╗  ██████╗██╗  ██╗
+██╔══██╗██║     ██║   ██║╚══██╔══╝██║  ██║██╔══██╗██╔════╝██║ ██╔╝
+██████╔╝██║     ██║   ██║   ██║   ███████║███████║██║     █████╔╝ 
+██╔══██╗██║     ██║   ██║   ██║   ██╔══██║██╔══██║██║     ██╔═██╗ 
+██████╔╝███████╗╚██████╔╝   ██║   ██║  ██║██║  ██║╚██████╗██║  ██╗
+╚═════╝ ╚══════╝ ╚═════╝    ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝
 """
-    print(banner)
+    print(gradient_text(banner))
+    print(gradient_text("        >>> BlutHack Bluetooth Scanner <<<\n"))
 
-# ===== КОМАНДЫ =====
-def run_cmd(cmd):
-    return subprocess.getoutput(cmd)
-
-# ===== СКАН =====
+# ===== СКАН (РАБОЧИЙ) =====
 def scan_devices():
-    print(Fore.YELLOW + "[*] Включаем Bluetooth...")
-    run_cmd("bluetoothctl power on")
-    run_cmd("bluetoothctl agent on")
-    run_cmd("bluetoothctl default-agent")
+    print(Fore.CYAN + "[*] Запуск сканирования... (10 сек)")
 
-    print(Fore.YELLOW + "[*] Сканирование (10 сек)...")
-    run_cmd("bluetoothctl scan on")
-    time.sleep(10)
-    run_cmd("bluetoothctl scan off")
+    process = subprocess.Popen(
+        ["bluetoothctl"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True
+    )
 
-    devices = run_cmd("bluetoothctl devices")
+    process.stdin.write("power on\n")
+    process.stdin.write("scan on\n")
+    process.stdin.flush()
 
-    print(Fore.CYAN + "\nНайденные устройства:")
-    print("-" * 50)
-    print(Fore.GREEN + devices)
-    print("-" * 50)
+    start_time = time.time()
+    devices = set()
+
+    while time.time() - start_time < 10:
+        line = process.stdout.readline()
+        if "Device" in line:
+            parts = line.strip().split(" ", 2)
+            if len(parts) >= 3:
+                mac = parts[1]
+                name = parts[2]
+                devices.add((mac, name))
+                print(Fore.BLUE + f"[+] {mac} - {name}")
+
+    process.stdin.write("scan off\n")
+    process.stdin.flush()
+    process.terminate()
+
+    if not devices:
+        print(Fore.RED + "[-] Ничего не найдено")
 
 # ===== ПОДКЛЮЧЕНИЕ =====
 def connect_device():
-    mac = input(Fore.WHITE + "Введи MAC устройства: ")
+    mac = input(Fore.WHITE + "MAC устройства: ")
 
     if not mac:
         return
 
-    print(Fore.YELLOW + f"[*] Подключение к {mac}...")
-    run_cmd(f"bluetoothctl pair {mac}")
-    run_cmd(f"bluetoothctl trust {mac}")
-    result = run_cmd(f"bluetoothctl connect {mac}")
+    print(Fore.CYAN + f"[*] Подключение к {mac}...")
 
-    print(Fore.GREEN + result)
-    input("\nНажми Enter...")
+    os.system(f"bluetoothctl pair {mac}")
+    os.system(f"bluetoothctl trust {mac}")
+    os.system(f"bluetoothctl connect {mac}")
+
+    input("\nEnter...")
 
 # ===== МЕНЮ =====
 def main():
     while True:
-        os.system("clear")
         draw_banner()
 
-        print(Fore.GREEN + "1. Сканировать Bluetooth")
-        print(Fore.CYAN + "2. Подключиться к устройству")
-        print(Fore.RED + "99. Выход")
+        print(gradient_text("1. Сканировать Bluetooth"))
+        print(gradient_text("2. Подключиться"))
+        print(Fore.RED + "99. Выход\n")
 
-        choice = input(Fore.WHITE + "\nBlutHack > ")
+        choice = input("BlutHack > ")
 
         if choice == "1":
             scan_devices()
@@ -77,13 +96,10 @@ def main():
         elif choice == "2":
             connect_device()
         elif choice == "99":
-            print(Fore.RED + "Выход...")
             break
         else:
-            print("Неверный выбор")
+            print("Ошибка")
             time.sleep(1)
 
-# ===== ЗАПУСК =====
 if __name__ == "__main__":
     main()
-
