@@ -4,7 +4,7 @@ import time
 import json
 import webbrowser
 from urllib.parse import quote_plus
-from colorama import init, Fore, Style
+from colorama import init, Fore
 
 init(autoreset=True)
 
@@ -30,69 +30,49 @@ def draw_banner():
     print()
 
 
-def run_btctl(commands):
-    process = subprocess.Popen(
-        ["bluetoothctl"],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1
-    )
-    for cmd in commands:
-        process.stdin.write(cmd + "\n")
-    process.stdin.flush()
-    return process
+def run_command(cmd):
+    return subprocess.run(cmd, shell=True, capture_output=True, text=True)
 
 
 def bluetooth_available():
-    try:
-        result = subprocess.run(
-            ["bluetoothctl", "list"],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
-        return result.returncode == 0
-    except Exception:
-        return False
+    result = run_command("bluetoothctl list")
+    return result.returncode == 0
 
 
 def scan_devices(duration=12):
     print(Fore.CYAN + f"[*] Сканирование Bluetooth {duration} сек...")
-    print(Fore.CYAN + "[*] Если ничего не найдёт, проверь адаптер, rfkill и запуск с sudo.\n")
+    print(Fore.CYAN + "[*] Используется тот же способ, что и в терминале: timeout + bluetoothctl scan on")
+    print()
 
-    process = run_btctl(["power on", "agent on", "default-agent", "scan on"])
+    cmd = f"timeout {duration}s bluetoothctl scan on"
+    result = run_command(cmd)
+
     devices = {}
-    start = time.time()
+    output = (result.stdout or "") + "\n" + (result.stderr or "")
 
-    try:
-        while time.time() - start < duration:
-            line = process.stdout.readline()
-            if not line:
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if "Device " in line:
+            try:
+                part = line.split("Device ", 1)[1]
+                mac, rest = part.split(" ", 1)
+                name = rest.strip()
+                if mac not in devices:
+                    devices[mac] = name
+            except ValueError:
                 continue
 
-            line = line.strip()
-
-            if "Device " in line:
-                parts = line.split("Device ", 1)[1]
-                pieces = parts.split(" ", 1)
-                if len(pieces) == 2:
-                    mac = pieces[0].strip()
-                    name = pieces[1].strip()
-                    if mac not in devices:
-                        devices[mac] = name
-                        print(Fore.BLUE + f"[+] {mac} - {name}")
-    finally:
-        try:
-            process.stdin.write("scan off\n")
-            process.stdin.flush()
-        except Exception:
-            pass
-        process.terminate()
-
-    if not devices:
+    if devices:
+        print(Fore.GREEN + "[+] Найденные устройства:")
+        print("-" * 60)
+        for mac, name in devices.items():
+            print(Fore.BLUE + f"{mac} - {name}")
+        print("-" * 60)
+    else:
         print(Fore.RED + "[-] Ничего не найдено.")
+        print(Fore.YELLOW + "[!] Если в терминале scan on видит устройства, но тут пусто — покажи вывод:")
+        print(Fore.YELLOW + f"    {cmd}")
+
     return devices
 
 
@@ -138,63 +118,110 @@ def ask_optional(prompt):
     return input(prompt).strip()
 
 
-def build_dorks():
+def unique_list(items):
+    out = []
+    seen = set()
+    for item in items:
+        if item and item not in seen:
+            out.append(item)
+            seen.add(item)
+    return out
+
+
+def build_queries():
     print(Fore.CYAN + "\n=== Search Builder ===")
+    print("Поля можно оставлять пустыми.")
+    print()
+
     query = ask_optional("Что ищешь (можно пусто): ")
     site = ask_optional("На каком сайте (можно пусто): ")
+    intext = ask_optional("Текст на странице / intext (можно пусто): ")
+    inurl = ask_optional("Слово в URL / inurl (можно пусто): ")
+    intitle = ask_optional("Слово в title / intitle (можно пусто): ")
     filetype = ask_optional("Тип файла (pdf, docx, xlsx...) (можно пусто): ")
-    intext = ask_optional("Слово в тексте (можно пусто): ")
-    inurl = ask_optional("Слово в URL (можно пусто): ")
-    intitle = ask_optional("Слово в заголовке (можно пусто): ")
-    exclude = ask_optional("Что исключить через минус (можно пусто): ")
     exact = ask_optional("Точная фраза в кавычках (можно пусто): ")
+    exclude = ask_optional("Что исключить через -term (можно пусто): ")
 
-    tokens = []
+    base_tokens = []
 
     if query:
-        tokens.append(query)
+        base_tokens.append(query)
     if exact:
-        tokens.append(f'"{exact}"')
+        base_tokens.append(f'"{exact}"')
     if site:
-        tokens.append(f"site:{site}")
-    if filetype:
-        tokens.append(f"filetype:{filetype}")
+        base_tokens.append(f"site:{site}")
     if intext:
-        tokens.append(f"intext:{intext}")
+        base_tokens.append(f'intext:"{intext}"')
     if inurl:
-        tokens.append(f"inurl:{inurl}")
+        base_tokens.append(f'inurl:"{inurl}"')
     if intitle:
-        tokens.append(f'intitle:"{intitle}"')
+        base_tokens.append(f'intitle:"{intitle}"')
+    if filetype:
+        base_tokens.append(f"filetype:{filetype}")
     if exclude:
-        tokens.append(f"-{exclude}")
+        base_tokens.append(f"-{exclude}")
 
-    base = " ".join(tokens).strip()
-    dorks = []
+    base = " ".join(base_tokens).strip()
+    queries = []
 
     if base:
-        dorks.append(base)
+        queries.append(base)
 
-        if site and query:
-            dorks.append(f'site:{site} "{query}"')
-        if filetype and query:
-            dorks.append(f'"{query}" filetype:{filetype}')
-        if inurl and site:
-            dorks.append(f"site:{site} inurl:{inurl}")
-        if intext and site:
-            dorks.append(f"site:{site} intext:{intext}")
-        if intitle and query:
-            dorks.append(f'intitle:"{intitle}" "{query}"')
-        if query and site and filetype:
-            dorks.append(f'site:{site} filetype:{filetype} "{query}"')
+    if query and site:
+        queries.append(f'site:{site} "{query}"')
 
-    unique = []
-    seen = set()
-    for item in dorks:
-        if item and item not in seen:
-            unique.append(item)
-            seen.add(item)
+    if query and intext:
+        if site:
+            queries.append(f'site:{site} "{query}" intext:"{intext}"')
+        else:
+            queries.append(f'"{query}" intext:"{intext}"')
 
-    return unique
+    if query and inurl:
+        if site:
+            queries.append(f'site:{site} "{query}" inurl:"{inurl}"')
+        else:
+            queries.append(f'"{query}" inurl:"{inurl}"')
+
+    if query and intitle:
+        if site:
+            queries.append(f'site:{site} intitle:"{intitle}" "{query}"')
+        else:
+            queries.append(f'intitle:"{intitle}" "{query}"')
+
+    if query and filetype:
+        if site:
+            queries.append(f'site:{site} filetype:{filetype} "{query}"')
+        else:
+            queries.append(f'filetype:{filetype} "{query}"')
+
+    if site and intext and filetype:
+        queries.append(f'site:{site} filetype:{filetype} intext:"{intext}"')
+
+    if site and inurl and filetype:
+        queries.append(f'site:{site} filetype:{filetype} inurl:"{inurl}"')
+
+    if site and intitle:
+        queries.append(f'site:{site} intitle:"{intitle}"')
+
+    if site and inurl:
+        queries.append(f'site:{site} inurl:"{inurl}"')
+
+    if site and intext:
+        queries.append(f'site:{site} intext:"{intext}"')
+
+    if filetype and intext:
+        queries.append(f'filetype:{filetype} intext:"{intext}"')
+
+    if filetype and intitle:
+        queries.append(f'filetype:{filetype} intitle:"{intitle}"')
+
+    if exact and site:
+        queries.append(f'site:{site} "{exact}"')
+
+    if exact and filetype:
+        queries.append(f'filetype:{filetype} "{exact}"')
+
+    return unique_list(queries)
 
 
 def open_queries(engine, queries):
@@ -207,8 +234,8 @@ def open_queries(engine, queries):
         webbrowser.open_new_tab(base + quote_plus(q))
 
 
-def osint_menu():
-    queries = build_dorks()
+def search_builder_menu():
+    queries = build_queries()
 
     if not queries:
         print(Fore.YELLOW + "\n[!] Пустой запрос. Нечего генерировать.")
@@ -230,13 +257,37 @@ def osint_menu():
         open_queries("bing", queries)
 
 
+def browsers_menu():
+    print(Fore.CYAN + "\nЛёгкие браузеры для старого antiX / Debian:\n")
+    print(Fore.GREEN + "1. links2      - очень лёгкий, есть графический режим")
+    print(Fore.GREEN + "2. w3m         - текстовый, очень быстрый")
+    print(Fore.GREEN + "3. lynx        - текстовый, минимальный")
+    print(Fore.GREEN + "4. dillo       - сверхлёгкий GUI-браузер")
+    print(Fore.GREEN + "5. netsurf-gtk - лёгкий GUI-браузер")
+    print()
+    print(Fore.CYAN + "Команды установки:")
+    print("sudo apt update")
+    print("sudo apt install links2 w3m lynx dillo netsurf-gtk")
+    print()
+    print(Fore.CYAN + "Запуск:")
+    print("links2 -g")
+    print("w3m https://example.org")
+    print("lynx https://example.org")
+    print("dillo")
+    print("netsurf-gtk")
+    input("\nНажми Enter...")
+
+
 def print_bt_help():
     print(Fore.CYAN + "\nПроверка Bluetooth:")
     print("1) lsusb")
     print("2) rfkill list")
     print("3) bluetoothctl list")
     print("4) hciconfig")
-    print("5) Запускай скан лучше так: sudo python3 OsintTool.py")
+    print("5) Прямой тест скана:")
+    print("   timeout 12s bluetoothctl scan on")
+    print("6) Запуск скрипта:")
+    print("   sudo python3 OsintTool.py")
     input("\nНажми Enter...")
 
 
@@ -250,7 +301,8 @@ def main():
         print(gradient_text("3. Сохранить последний скан"))
         print(gradient_text("4. Загрузить сохранённые устройства"))
         print(gradient_text("5. Search Builder"))
-        print(gradient_text("6. Проверка Bluetooth / Help"))
+        print(gradient_text("6. Лёгкие браузеры"))
+        print(gradient_text("7. Проверка Bluetooth / Help"))
         print(Fore.RED + "99. Выход\n")
 
         choice = input("OsintTool > ").strip()
@@ -275,8 +327,10 @@ def main():
             load_devices()
             input("\nНажми Enter...")
         elif choice == "5":
-            osint_menu()
+            search_builder_menu()
         elif choice == "6":
+            browsers_menu()
+        elif choice == "7":
             print_bt_help()
         elif choice == "99":
             break
